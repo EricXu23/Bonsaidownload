@@ -118,8 +118,8 @@ else:
         "convert.py not found in Bonsaidownload folder."
     )
 
+# Run COLMAP conversion using Gaussian Splatting convert.py
 
-# 7. Run COLMAP conversion
 print("Starting COLMAP conversion...")
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -127,12 +127,11 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 subprocess.run(
     [
         "xvfb-run",
+        "-a",
         "python",
-        str(convert_file),
+        "/workspace/gaussian-splatting/convert.py",
         "-s",
         str(dataset_path)
     ],
     check=True
 )
-
-print("Done!")

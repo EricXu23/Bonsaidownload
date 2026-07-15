@@ -9,9 +9,9 @@ import subprocess
 subprocess.run(
     [
         "python",
-        "train.py",
+        "/workspace/gaussian-splatting/train.py",
         "-s",
-        str(dataset_path),
+        dataset_path,
         "--eval",
         "--iterations",
         "2000"
