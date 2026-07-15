@@ -1,84 +1,138 @@
 import os
 import shutil
+import subprocess
+from pathlib import Path
 from PIL import Image
 
-# Install xvfb for headless GPU OpenGL context
-os.system("sudo apt-get install -y xvfb")
+# Dataset location on RunPod
+dataset_path = Path("/workspace/Bonsaidownload")
+input_path = dataset_path / "input"
 
-dataset_path = "/content/drive/MyDrive/nerf_datasets/bonsai"
-input_path = os.path.join(dataset_path, "input")
+print(f"Using dataset: {dataset_path}")
+print(f"Input folder: {input_path}")
 
-# Ensure the 'input' folder exists
-if not os.path.exists(input_path):
-    os.makedirs(input_path)
+# Ensure input folder exists
+input_path.mkdir(exist_ok=True)
 
-print(f"Organizing 'input' directory at {input_path}")
-valid_exts = ['.jpg', '.jpeg', '.png', '.exr', '.tif', '.tiff']
+valid_exts = [".jpg", ".jpeg", ".png", ".exr", ".tif", ".tiff"]
 
-# 1. Move any valid images from the dataset root into 'input'
-for item in os.listdir(dataset_path):
-    if item == "input":
+# 1. Move images from dataset root into input folder
+for item in dataset_path.iterdir():
+    if item.name == "input":
         continue
-    item_path = os.path.join(dataset_path, item)
-    if os.path.isfile(item_path):
-        if any(item.lower().endswith(ext) for ext in valid_exts):
-            shutil.move(item_path, os.path.join(input_path, item))
 
-# 2. Move any NON-image files from 'input' back to the dataset root
-for item in os.listdir(input_path):
-    item_path = os.path.join(input_path, item)
-    if os.path.isfile(item_path):
-        if not any(item.lower().endswith(ext) for ext in valid_exts):
-            print(f"Moving non-image file '{item}' out of 'input' folder...")
-            shutil.move(item_path, os.path.join(dataset_path, item))
+    if item.is_file() and item.suffix.lower() in valid_exts:
+        print(f"Moving {item.name} into input/")
+        shutil.move(str(item), str(input_path / item.name))
 
-# 3. Limit to 40 images
-all_images = sorted([f for f in os.listdir(input_path) if any(f.lower().endswith(e) for e in valid_exts)])
+
+# 2. Remove non-image files from input folder
+for item in input_path.iterdir():
+    if item.is_file() and item.suffix.lower() not in valid_exts:
+        print(f"Moving non-image file {item.name} out of input/")
+        shutil.move(str(item), str(dataset_path / item.name))
+
+
+# 3. Limit number of images
+images = sorted(
+    [f for f in input_path.iterdir()
+     if f.suffix.lower() in valid_exts]
+)
+
 MAX_IMAGES = 40
 
-if len(all_images) > MAX_IMAGES:
-    print(f"\nFound {len(all_images)} images. Reducing to {MAX_IMAGES}...")
-    for img in all_images[MAX_IMAGES:]:
-        shutil.move(os.path.join(input_path, img), os.path.join(dataset_path, img))
+if len(images) > MAX_IMAGES:
+    print(f"Found {len(images)} images, keeping only {MAX_IMAGES}")
 
-images_count = len([f for f in os.listdir(input_path) if any(f.lower().endswith(e) for e in valid_exts)])
-print(f"\nReady! Found {images_count} images in the 'input' folder.")
+    for img in images[MAX_IMAGES:]:
+        shutil.move(str(img), str(dataset_path / img.name))
 
-if images_count == 0:
-    print("ERROR: No images found! Please check where your images are located in Google Drive.")
+
+# Count images
+images = [
+    f for f in input_path.iterdir()
+    if f.suffix.lower() in valid_exts
+]
+
+print(f"Ready! Found {len(images)} images")
+
+
+if len(images) == 0:
+    raise Exception("No images found in input folder")
+
+
+# 4. Resize images
+print("Resizing images if needed...")
+
+for img_path in images:
+    try:
+        with Image.open(img_path) as img:
+
+            if img.width > 800 or img.height > 800:
+                img.thumbnail(
+                    (800, 800),
+                    Image.Resampling.LANCZOS
+                )
+
+                img.save(img_path)
+
+                print(
+                    f"Resized {img_path.name}"
+                )
+
+    except Exception as e:
+        print(
+            f"Error resizing {img_path.name}: {e}"
+        )
+
+
+# 5. Remove previous COLMAP outputs
+for folder in ["distorted", "sparse"]:
+
+    path = dataset_path / folder
+
+    if path.exists():
+        shutil.rmtree(path)
+        print(f"Removed old {folder}")
+
+
+# 6. Patch convert.py
+convert_file = dataset_path / "convert.py"
+
+if convert_file.exists():
+
+    print("Patching convert.py...")
+
+    subprocess.run(
+        [
+            "sed",
+            "-i",
+            "s/exhaustive_matcher/sequential_matcher/g",
+            str(convert_file)
+        ],
+        check=True
+    )
+
 else:
-    # 4. Resize images to prevent RAM crash
-    print("\nResizing images to max 800px to prevent Colab from running out of RAM...")
-    for img_name in os.listdir(input_path):
-        if any(img_name.lower().endswith(e) for e in valid_exts):
-            img_path = os.path.join(input_path, img_name)
-            try:
-                with Image.open(img_path) as img:
-                    # Only resize if larger than 800
-                    if img.size[0] > 800 or img.size[1] > 800:
-                        img.thumbnail((800, 800), Image.Resampling.LANCZOS)
-                        img.save(img_path)
-            except Exception as e:
-                print(f"Error resizing {img_name}: {e}")
+    print(
+        "convert.py not found in Bonsaidownload folder."
+    )
 
-    # 5. Clean up ANY broken folders from previous crashes
-    distorted_path = os.path.join(dataset_path, "distorted")
-    sparse_path = os.path.join(dataset_path, "sparse")
 
-    if os.path.exists(distorted_path):
-        shutil.rmtree(distorted_path)
-        print("Cleaned up old interrupted 'distorted' database folder.")
-    if os.path.exists(sparse_path):
-        shutil.rmtree(sparse_path)
-        print("Cleaned up old interrupted 'sparse' folder.")
+# 7. Run COLMAP conversion
+print("Starting COLMAP conversion...")
 
-    # Set the Qt platform to offscreen for headless Colab environment
-    os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-    # PATCH: Modify the convert.py script to use sequential_matcher instead of exhaustive_matcher
-    print("\nPatching convert.py to use sequential_matcher...")
-    !sed -i 's/exhaustive_matcher/sequential_matcher/g' convert.py
+subprocess.run(
+    [
+        "xvfb-run",
+        "python",
+        str(convert_file),
+        "-s",
+        str(dataset_path)
+    ],
+    check=True
+)
 
-    # Run COLMAP with GPU using xvfb to provide a virtual display!
-    print("\nStarting COLMAP extraction (GPU mode with xvfb) - Sequential Matching...")
-    !xvfb-run python convert.py -s {dataset_path}
+print("Done!")
